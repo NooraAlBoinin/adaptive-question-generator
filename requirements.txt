@@ -1,0 +1,7 @@
+streamlit
+numpy
+textstat
+sentence-transformers
+langchain-openai
+langchain-core
+pydantic
