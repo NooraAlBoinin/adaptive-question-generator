@@ -1,250 +1,270 @@
-from typing import Dict, List, Optional, Tuple, Union
-import json
+# app.py - NEAT STRUCTURED STREAMLIT UI (Distinction-ready)
+import os
 import random
+import streamlit as st
 
-import textstat
+from question_generator import QuestionGenerator
+from curriculum_mapper import CurriculumMapper
+from difficulty_estimator import DifficultyEstimator
+from adaptive_engine import AdaptiveSequencer
 
-from langchain_openai import ChatOpenAI
-from langchain_core.output_parsers import PydanticOutputParser
-from pydantic import BaseModel, Field, validator
+# ----------------------------
+# Page config
+# ----------------------------
+st.set_page_config(page_title="AI Adaptive Question Generator", layout="wide")
+st.title("AI-Powered Adaptive Question Generator")
+st.caption("Primary Cybersecurity & Digital Literacy • Qatar • Adaptive Difficulty • MCQ Practice")
+st.divider()
+
+# ----------------------------
+# Sidebar (Configuration)
+# ----------------------------
+st.sidebar.header("Configuration")
+api_key = st.sidebar.text_input("OpenAI API Key", type="password", value=os.getenv("OPENAI_API_KEY", ""))
+
+grade = st.sidebar.selectbox("Grade Level", [3, 4, 5, 6])
+topic = st.sidebar.selectbox(
+    "Topic Area",
+    [
+        "Online Safety",
+        "Password Security",
+        "Phishing Recognition",
+        "Digital Footprint",
+        "Digital Citizenship",
+        "Cybersecurity Basics",
+    ],
+)
+
+st.sidebar.divider()
+st.sidebar.caption("Tip: changing grade/topic during a quiz may reset progress.")
+
+# ----------------------------
+# Load curriculum (cache per grade/topic)
+# ----------------------------
+@st.cache_data
+def load_curriculum(selected_grade: int, selected_topic: str):
+    mapper = CurriculumMapper()
+    sample_outcomes = [
+        {"description": f"Students will understand {selected_topic.lower()}.", "grade_level": selected_grade, "topic": selected_topic},
+        {"description": "Identify safe and unsafe online behaviors.", "grade_level": selected_grade, "topic": selected_topic},
+        {"description": "Recognize phishing attempts in emails.", "grade_level": selected_grade, "topic": selected_topic},
+    ]
+    return mapper.map_outcomes(sample_outcomes)
+
+outcomes = load_curriculum(grade, topic)
+
+# ----------------------------
+# Initialize components
+# ----------------------------
+if not (api_key and api_key.startswith("sk-")):
+    st.error("Please enter a valid OpenAI API key in the sidebar")
+    st.stop()
+
+qg = QuestionGenerator(api_key=api_key)
+estimator = DifficultyEstimator()
+
+# ----------------------------
+# Session state init
+# ----------------------------
+if "sequencer" not in st.session_state:
+    st.session_state.sequencer = AdaptiveSequencer(initial_ability=0.0)
+    st.session_state.sequencer.initialize_session("demo_student", outcomes * 10)  # fake pool
+
+if "current_question" not in st.session_state:
+    st.session_state.current_question = None
+
+if "current_options" not in st.session_state:
+    st.session_state.current_options = None
+
+if "selected_option" not in st.session_state:
+    st.session_state.selected_option = None
+
+if "feedback" not in st.session_state:
+    st.session_state.feedback = None
+
+if "answered" not in st.session_state:
+    st.session_state.answered = False
+
+if "correct_count" not in st.session_state:
+    st.session_state.correct_count = 0
+
+if "answered_count" not in st.session_state:
+    st.session_state.answered_count = 0
+
+# NEW: prevent repetition
+if "question_history" not in st.session_state:
+    st.session_state.question_history = []
+
+# NEW: show recent attempts
+if "attempt_log" not in st.session_state:
+    st.session_state.attempt_log = []
+
+# NEW: store last selected config to detect changes
+if "last_config" not in st.session_state:
+    st.session_state.last_config = {"grade": grade, "topic": topic}
+
+sequencer = st.session_state.sequencer
+
+# ----------------------------
+# Helpers
+# ----------------------------
+def generate_new_question():
+    # Pick outcome for variety
+    outcome = random.choice(outcomes)
+
+    # Avoid repeats (last 5 stems)
+    avoid = st.session_state.question_history[-5:]
+
+    q = qg.generate_question(outcome, avoid_stems=avoid)
+    if not q:
+        st.session_state.current_question = None
+        st.session_state.current_options = None
+        st.session_state.feedback = {"correct": False, "message": "⚠️ Failed to generate a question. Try again."}
+        st.session_state.answered = False
+        st.session_state.selected_option = None
+        return
+
+    # Save stem to history
+    st.session_state.question_history.append(q["question_stem"])
+
+    # Estimate difficulty
+    diff = estimator.estimate_difficulty(q)
+    q["estimated_difficulty"] = diff["composite_difficulty"]
+
+    # Shuffle options fairly
+    options = [q["correct_answer"]] + q["distractors"]
+    random.shuffle(options)
+
+    st.session_state.current_question = q
+    st.session_state.current_options = options
+    st.session_state.feedback = None
+    st.session_state.answered = False
+    st.session_state.selected_option = None
 
 
-class QuestionSchema(BaseModel):
-    """Pydantic model defining expected question structure."""
-    question_stem: str = Field(..., min_length=10, max_length=500)
-    correct_answer: str = Field(..., min_length=3, max_length=200)
-    distractors: List[str] = Field(..., min_items=3, max_items=3)
-    explanation: str = Field(..., min_length=20, max_length=1000)
-    bloom_level: str = Field(..., pattern="^(Knowledge|Comprehension|Application|Analysis)$")
-    estimated_difficulty: float = Field(..., ge=1.0, le=5.0)
+def reset_quiz():
+    st.session_state.current_question = None
+    st.session_state.current_options = None
+    st.session_state.selected_option = None
+    st.session_state.feedback = None
+    st.session_state.answered = False
+    st.session_state.correct_count = 0
+    st.session_state.answered_count = 0
+    st.session_state.question_history = []
+    st.session_state.attempt_log = []
 
-    @validator('distractors')
-    def check_distractor_lengths(cls, v):
-        """Ensure distractors are similar length to avoid cueing."""
-        lengths = [len(d) for d in v]
-        if max(lengths) - min(lengths) > 50:
-            raise ValueError("Distractors have inconsistent lengths")
-        return v
+    st.session_state.sequencer = AdaptiveSequencer(initial_ability=0.0)
+    st.session_state.sequencer.initialize_session("demo_student", outcomes * 10)
 
 
-class QuestionGenerator:
-    """
-    Generates curriculum-aligned MCQs using LLM prompting with
-    few-shot learning and structured output parsing.
+# ----------------------------
+# Auto reset if grade/topic changed (optional but clean)
+# ----------------------------
+if (st.session_state.last_config["grade"] != grade) or (st.session_state.last_config["topic"] != topic):
+    reset_quiz()
+    st.session_state.last_config = {"grade": grade, "topic": topic}
+    st.info("Configuration changed → quiz reset for consistency ✅")
 
-    UPDATED:
-    - Supports optional return_meta=True to return (question_dict, meta)
-    - Meta includes attempts_used + failure reasons per attempt
-    - Validation now returns (ok, reasons)
-    """
+# ----------------------------
+# Dashboard / Status (Top card)
+# ----------------------------
+with st.container(border=True):
+    st.subheader("📊 Student Dashboard")
 
-    def __init__(self, api_key: str, model: str = "gpt-4o-mini", temperature: float = 0.8):
-        # Slightly higher temperature helps diversity while still stable.
-        self.llm = ChatOpenAI(
-            model=model,
-            temperature=temperature,
-            openai_api_key=api_key,
-            request_timeout=60
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Student Ability (θ)", f"{sequencer.current_ability:.2f}")
+
+    c2.metric("Answered", str(st.session_state.answered_count))
+    c3.metric("Correct", str(st.session_state.correct_count))
+
+    accuracy = (st.session_state.correct_count / max(1, st.session_state.answered_count)) * 100
+    c4.metric("Accuracy", f"{accuracy:.0f}%")
+
+    if st.session_state.attempt_log:
+        st.caption("Recent attempts: " + " ".join(st.session_state.attempt_log[-10:]))
+
+# ----------------------------
+# Controls row (clean)
+# ----------------------------
+controls = st.columns([2, 1])
+with controls[0]:
+    if st.button("🎲 Generate / Next Question", type="primary"):
+        generate_new_question()
+        st.rerun()
+
+with controls[1]:
+    if st.button("🔄 Reset Quiz", type="secondary"):
+        reset_quiz()
+        st.rerun()
+
+# ----------------------------
+# Question card
+# ----------------------------
+q = st.session_state.current_question
+options = st.session_state.current_options
+
+with st.container(border=True):
+    st.subheader("🧠 Question")
+
+    if q and options:
+        st.write(q["question_stem"])
+
+        st.session_state.selected_option = st.radio(
+            "Choose one answer:",
+            options,
+            index=None,
+            key="answer_radio",
+            disabled=st.session_state.answered,
         )
 
-        self.output_parser = PydanticOutputParser(pydantic_object=QuestionSchema)
-        self.parser = self.output_parser
-
-        # Load few-shot exemplars
-        self.exemplars = self._load_exemplars()
-
-        # Small pool of context variations (keeps novelty without changing requirements)
-        self.scenario_seeds = [
-            "at school",
-            "at home",
-            "during a class project",
-            "when using a tablet",
-            "when using a shared computer",
-            "when playing an online game",
-            "when using email",
-            "when watching videos online",
-        ]
-
-    def _load_exemplars(self) -> List[Dict]:
-        """Load manually authored exemplar questions for few-shot learning."""
-        return [
-            {
-                "learning_outcome": "Students will be able to identify strong passwords.",
-                "grade_level": "3",
-                "bloom_level": "Knowledge",
-                "difficulty": "2",
-                "question": {
-                    "question_stem": "Which password is the strongest?",
-                    "correct_answer": "MyDog#2024!",
-                    "distractors": ["password", "12345678", "mydog2024"],
-                    "explanation": "MyDog#2024! is strongest because it combines uppercase letters, lowercase letters, numbers, and special characters, making it hard to guess.",
-                    "bloom_level": "Knowledge",
-                    "estimated_difficulty": 2.0
-                }
-            },
-            {
-                "learning_outcome": "Students will be able to explain why sharing personal information online can be risky.",
-                "grade_level": "4",
-                "bloom_level": "Comprehension",
-                "difficulty": "3",
-                "question": {
-                    "question_stem": "Why should you not share your home address on social media?",
-                    "correct_answer": "Strangers could find out where you live and visit without permission",
-                    "distractors": [
-                        "Your friends already know where you live",
-                        "It takes too long to type your full address",
-                        "Social media websites do not allow addresses"
-                    ],
-                    "explanation": "Sharing your home address online allows strangers to know where you live, which could be dangerous. Personal information should be kept private to protect your safety.",
-                    "bloom_level": "Comprehension",
-                    "estimated_difficulty": 3.0
-                }
-            }
-        ]
-
-    def generate_question(
-        self,
-        learning_outcome: Dict,
-        target_difficulty: float = 3.0,
-        max_attempts: int = 3,
-        avoid_stems: Optional[List[str]] = None,
-        return_meta: bool = False
-    ) -> Union[Optional[Dict], Tuple[Optional[Dict], Dict]]:
-
-        avoid_stems = avoid_stems or []
-        base_prompt = self._build_prompt(learning_outcome, target_difficulty, avoid_stems)
-
-        # Collect failure info per generation attempt (for dissertation stats)
-        fail_reasons: List[Dict] = []
-
-        prompt = base_prompt
-        for attempt in range(1, max_attempts + 1):
-            try:
-                response = self.llm.invoke(prompt)
-                raw_output = getattr(response, "content", str(response))
-
-                question = self.parser.parse(raw_output)
-
-                ok, reasons = self._validate_question(question, learning_outcome)
-                if ok:
-                    meta = {"attempts_used": attempt, "fail_reasons": []}
-                    result = question.model_dump()
-                    return (result, meta) if return_meta else result
-
-                # Validation failed
-                fail_reasons.append({"attempt": attempt, "reasons": reasons})
-                print(f"Generation attempt {attempt} failed validation: {reasons}")
-                prompt = self._adjust_prompt_for_retry(base_prompt, attempt)
-
-            except Exception as e:
-                # Parse/LLM error
-                fail_reasons.append({
-                    "attempt": attempt,
-                    "reasons": ["parse_or_llm_error"],
-                    "error": str(e)[:200]
-                })
-                print(f"Generation attempt {attempt} failed: {e}")
-                prompt = self._adjust_prompt_for_retry(base_prompt, attempt)
-
-        # All attempts failed
-        meta = {"attempts_used": max_attempts, "fail_reasons": fail_reasons}
-        return (None, meta) if return_meta else None
-
-    def _build_prompt(self, learning_outcome: Dict, target_difficulty: float, avoid_stems: List[str]) -> str:
-        """Construct prompt with system role, context, constraints, and examples."""
-
-        grade = int(learning_outcome["grade_level"])
-        scenario_hint = random.choice(self.scenario_seeds)
-
-        system_message = (
-            "You are an expert educational assessment designer specializing in "
-            "digital literacy and cybersecurity education for primary school children in Qatar. "
-            "Your questions must be age-appropriate, culturally sensitive, and aligned to curriculum outcomes."
+        submit = st.button(
+            "✅ Submit Answer",
+            type="primary",
+            disabled=(st.session_state.selected_option is None or st.session_state.answered),
         )
 
-        context = f"""
-Target Grade Level: Grade {grade} (ages {grade + 5}-{grade + 6})
-Learning Outcome: {learning_outcome['outcome_text']}
-Topic Area: {learning_outcome['topic_area']}
-Bloom's Cognitive Level: {learning_outcome['bloom_level']}
-Target Difficulty: {target_difficulty}/5.0
-Scenario hint (use for variety): {scenario_hint}
-"""
+        if submit:
+            chosen = st.session_state.selected_option
+            is_correct = (chosen == q["correct_answer"])
 
-        constraints = """
-CONSTRAINTS:
-1. Use simple vocabulary appropriate for the target grade level
-2. Keep question stem to 10–25 words maximum
-3. Keep answer choices to 3–15 words each
-4. Generate exactly three plausible but incorrect distractors
-5. Avoid cultural insensitivity or stereotypes
-6. Ensure distractors reflect common misconceptions
-7. Provide a clear explanation (20–100 words)
-8. Make the question clearly NEW and not a rephrase of any previous examples
-"""
+            # Update counts
+            st.session_state.answered_count += 1
+            if is_correct:
+                st.session_state.correct_count += 1
 
-        avoid_text = ""
-        if avoid_stems:
-            avoid_text = (
-                "\nDO NOT repeat or closely rephrase any of these previous question stems:\n" +
-                "\n".join([f"- {s}" for s in avoid_stems])
-            )
+            # Log attempts (✅/❌)
+            st.session_state.attempt_log.append("✅" if is_correct else "❌")
+            st.session_state.attempt_log = st.session_state.attempt_log[-10:]
 
-        examples_text = "\n\n".join([
-            f"EXAMPLE {i + 1}:\n{json.dumps(ex['question'], indent=2)}"
-            for i, ex in enumerate(self.exemplars)
-        ])
+            # Update adaptive model
+            sequencer.update_ability(q, is_correct)
 
-        task = f"""
-Generate one multiple-choice question.
+            # Feedback
+            if is_correct:
+                st.session_state.feedback = {"correct": True, "message": "✅ Correct! Great job 🎉"}
+            else:
+                st.session_state.feedback = {"correct": False, "message": f"❌ Incorrect. Correct answer: **{q['correct_answer']}**"}
 
-OUTPUT FORMAT (JSON ONLY):
-{self.output_parser.get_format_instructions()}
+            st.session_state.answered = True
+            st.rerun()
+    else:
+        st.info("Click **Generate / Next Question** to start ✅")
 
-{avoid_text}
-"""
+# ----------------------------
+# Feedback card
+# ----------------------------
+with st.container(border=True):
+    st.subheader("📌 Feedback")
 
-        return f"{system_message}\n\n{context}\n\n{constraints}\n\n{examples_text}\n\n{task}"
+    if st.session_state.feedback:
+        if st.session_state.feedback["correct"]:
+            st.success(st.session_state.feedback["message"])
+        else:
+            st.error(st.session_state.feedback["message"])
 
-    def _adjust_prompt_for_retry(self, original_prompt: str, attempt: int) -> str:
-        """Adjust prompt for retry attempts to improve success rate & novelty."""
-        adjustments = [
-            "\n\nIMPORTANT: Make it clearly different from the examples and any previous stems (new scenario + new wording).",
-            "\n\nIMPORTANT: Ensure distractors are plausible and similar length to the correct answer. Avoid obvious choices.",
-            "\n\nIMPORTANT: Include at least one keyword from the learning outcome in the stem or options."
-        ]
-        idx = min(attempt - 1, len(adjustments) - 1)
-        return original_prompt + adjustments[idx]
+    if q and st.session_state.answered:
+        st.info(f"💡 Explanation: {q['explanation']}")
 
-    def _validate_question(self, question: QuestionSchema, learning_outcome: Dict) -> Tuple[bool, List[str]]:
-        """Apply additional validation checks beyond schema validation, returning reasons."""
-
-        reasons: List[str] = []
-
-        # Bloom match
-        if question.bloom_level != learning_outcome["bloom_level"]:
-            reasons.append("bloom_mismatch")
-
-        # Keyword presence (if keywords exist)
-        outcome_keywords = set(learning_outcome.get("keywords", []))
-        question_text = (
-            question.question_stem + " " +
-            question.correct_answer + " " +
-            " ".join(question.distractors)
-        ).lower()
-
-        if outcome_keywords:
-            if not any(kw.lower() in question_text for kw in outcome_keywords):
-                reasons.append("keyword_missing")
-
-        # Uniqueness of choices
-        all_choices = [question.correct_answer] + question.distractors
-        if len(set(all_choices)) != 4:
-            reasons.append("choices_not_unique")
-
-        # Readability check for primary level
-        fk_grade = textstat.flesch_kincaid_grade(question.question_stem)
-        if fk_grade > int(learning_outcome["grade_level"]) + 2:
-            reasons.append("readability_high")
-
-        return (len(reasons) == 0), reasons
+        m1, m2 = st.columns(2)
+        m1.write(f"**Difficulty:** {q.get('estimated_difficulty', 0):.2f} / 5.0")
+        m2.write(f"**Bloom Level:** {q.get('bloom_level', 'N/A')}")
