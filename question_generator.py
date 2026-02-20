@@ -118,6 +118,14 @@ class QuestionGenerator:
                 question = self.parser.parse(raw_output)
 
                 if self._validate_question(question, learning_outcome):
+                        print(
+                        f"SUCCESS | attempt={attempt} | grade={learning_outcome['grade_level']} "
+                        f"| bloom={learning_outcome['bloom_level']} | topic={learning_outcome.get('topic_area','')}"
+                        )
+                        return question.model_dump()
+                    else:
+                        print(f"Generation attempt {attempt} failed validation.")
+                        prompt = self._adjust_prompt_for_retry(base_prompt, attempt)
                     return question.model_dump()
                 else:
                     print(f"Generation attempt {attempt} failed validation.")
@@ -126,6 +134,12 @@ class QuestionGenerator:
             except Exception as e:
                 print(f"Generation attempt {attempt} failed: {e}")
                 prompt = self._adjust_prompt_for_retry(base_prompt, attempt)
+
+
+                        print(
+                        f"FINAL_FAIL | max_attempts={max_attempts} | grade={learning_outcome['grade_level']} "
+                        f"| bloom={learning_outcome['bloom_level']} | topic={learning_outcome.get('topic_area','')}"
+                    )
 
         return None
 
