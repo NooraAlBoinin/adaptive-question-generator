@@ -97,44 +97,37 @@ class QuestionGenerator:
                 }
             }
         ]
-def generate_question(
-    self,
-    learning_outcome: Dict,
-    target_difficulty: float = 3.0,
-    max_attempts: int = 3,
-    avoid_stems: Optional[List[str]] = None
-) -> Optional[Dict]:
 
-    avoid_stems = avoid_stems or []
-    base_prompt = self._build_prompt(learning_outcome, target_difficulty, avoid_stems)
+    def generate_question(
+        self,
+        learning_outcome: Dict,
+        target_difficulty: float = 3.0,
+        max_attempts: int = 3,
+        avoid_stems: Optional[List[str]] = None
+    ) -> Optional[Dict]:
 
-    prompt = base_prompt
-    for attempt in range(1, max_attempts + 1):
-        try:
-            response = self.llm.invoke(prompt)
-            raw_output = getattr(response, "content", str(response))
+        avoid_stems = avoid_stems or []
+        base_prompt = self._build_prompt(learning_outcome, target_difficulty, avoid_stems)
 
-            question = self.parser.parse(raw_output)
+        prompt = base_prompt
+        for attempt in range(1, max_attempts + 1):
+            try:
+                response = self.llm.invoke(prompt)
+                raw_output = getattr(response, "content", str(response))
 
-            if self._validate_question(question, learning_outcome):
-                print(
-                    f"SUCCESS | attempt={attempt} | grade={learning_outcome['grade_level']} "
-                    f"| bloom={learning_outcome['bloom_level']} | topic={learning_outcome.get('topic_area','')}"
-                )
-                return question.model_dump()
+                question = self.parser.parse(raw_output)
 
-            print(f"Generation attempt {attempt} failed validation.")
-            prompt = self._adjust_prompt_for_retry(base_prompt, attempt)
+                if self._validate_question(question, learning_outcome):
+                    return question.model_dump()
+                else:
+                    print(f"Generation attempt {attempt} failed validation.")
+                    prompt = self._adjust_prompt_for_retry(base_prompt, attempt)
 
-        except Exception as e:
-            print(f"Generation attempt {attempt} failed: {e}")
-            prompt = self._adjust_prompt_for_retry(base_prompt, attempt)
+            except Exception as e:
+                print(f"Generation attempt {attempt} failed: {e}")
+                prompt = self._adjust_prompt_for_retry(base_prompt, attempt)
 
-    print(
-        f"FINAL_FAIL | max_attempts={max_attempts} | grade={learning_outcome['grade_level']} "
-        f"| bloom={learning_outcome['bloom_level']} | topic={learning_outcome.get('topic_area','')}"
-    )
-    return None
+        return None
 
     def _build_prompt(self, learning_outcome: Dict, target_difficulty: float, avoid_stems: List[str]) -> str:
         """Construct prompt with system role, context, constraints, and examples."""
