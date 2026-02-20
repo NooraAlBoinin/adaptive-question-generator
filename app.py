@@ -208,72 +208,6 @@ with st.container(border=True):
         st.caption("Recent attempts: " + " ".join(st.session_state.attempt_log[-10:]))
 
 # ----------------------------
-# Option A: Generator Statistics Panel (Dissertation Evidence)
-# ----------------------------
-with st.container(border=True):
-    st.subheader("📈 Generator Statistics (Dissertation Evidence)")
-
-    gm = st.session_state.get("gen_metrics", [])
-    if not gm:
-        st.info("No generator metrics yet. Generate a few questions first.")
-    else:
-        df = pd.DataFrame(gm)
-
-        total = len(df)
-        success_n = int(df["success"].sum())
-        success_rate = (success_n / total) * 100 if total > 0 else 0.0
-
-        avg_attempts = df["attempts_used"].mean() if total > 0 else 0.0
-        avg_latency = df["latency_sec"].mean() if total > 0 else 0.0
-        p95_latency = df["latency_sec"].quantile(0.95) if total > 0 else 0.0
-
-        g1, g2, g3, g4 = st.columns(4)
-        g1.metric("Generations", f"{total}")
-        g2.metric("Success rate", f"{success_rate:.1f}%")
-        g3.metric("Avg attempts used", f"{avg_attempts:.2f}")
-        g4.metric("Avg latency", f"{avg_latency:.2f}s")
-
-        st.caption(f"95th percentile latency: {p95_latency:.2f}s")
-
-        # Failure reasons (only failed generations)
-        failure_counter = Counter()
-        for event in gm:
-            if not event.get("success", False):
-                for attempt_entry in event.get("fail_reasons", []):
-                    for reason in attempt_entry.get("reasons", []):
-                        failure_counter[reason] += 1
-
-        if failure_counter:
-            st.write("**Top failure causes:**")
-            st.dataframe(
-                pd.DataFrame(failure_counter.most_common(), columns=["reason", "count"]),
-                use_container_width=True
-            )
-        else:
-            st.success("No recorded failure reasons (all generations succeeded). ✅")
-
-        # Optional: Success by grade/topic/bloom (helpful if you switch configs during tests)
-        by_cfg = (
-            df.groupby(["grade", "topic", "bloom"])["success"]
-              .agg(total="count", successes="sum")
-              .reset_index()
-        )
-        by_cfg["success_rate_%"] = (by_cfg["successes"] / by_cfg["total"] * 100).round(1)
-
-        with st.expander("Show success rate by grade/topic/Bloom"):
-            st.dataframe(by_cfg.sort_values(["grade", "topic", "bloom"]), use_container_width=True)
-
-        with st.expander("Show raw generation log"):
-            st.dataframe(df, use_container_width=True)
-
-        st.download_button(
-            "⬇️ Download generation log (CSV)",
-            data=df.to_csv(index=False),
-            file_name="generation_log.csv",
-            mime="text/csv",
-        )
-
-# ----------------------------
 # Controls row (clean)
 # ----------------------------
 controls = st.columns([2, 1])
@@ -358,3 +292,75 @@ with st.container(border=True):
         m1, m2 = st.columns(2)
         m1.write(f"**Difficulty:** {q.get('estimated_difficulty', 0):.2f} / 5.0")
         m2.write(f"**Bloom Level:** {q.get('bloom_level', 'N/A')}")
+
+
+
+
+
+
+# ----------------------------
+# Generator Statistics Panel (Dissertation Evidence)
+# ----------------------------
+with st.container(border=True):
+    st.subheader("📈 Generator Statistics (Dissertation Evidence)")
+
+    gm = st.session_state.get("gen_metrics", [])
+    if not gm:
+        st.info("No generator metrics yet. Generate a few questions first.")
+    else:
+        df = pd.DataFrame(gm)
+
+        total = len(df)
+        success_n = int(df["success"].sum())
+        success_rate = (success_n / total) * 100 if total > 0 else 0.0
+
+        avg_attempts = df["attempts_used"].mean() if total > 0 else 0.0
+        avg_latency = df["latency_sec"].mean() if total > 0 else 0.0
+        p95_latency = df["latency_sec"].quantile(0.95) if total > 0 else 0.0
+
+        g1, g2, g3, g4 = st.columns(4)
+        g1.metric("Generations", f"{total}")
+        g2.metric("Success rate", f"{success_rate:.1f}%")
+        g3.metric("Avg attempts used", f"{avg_attempts:.2f}")
+        g4.metric("Avg latency", f"{avg_latency:.2f}s")
+
+        st.caption(f"95th percentile latency: {p95_latency:.2f}s")
+
+        # Failure reasons (only failed generations)
+        failure_counter = Counter()
+        for event in gm:
+            if not event.get("success", False):
+                for attempt_entry in event.get("fail_reasons", []):
+                    for reason in attempt_entry.get("reasons", []):
+                        failure_counter[reason] += 1
+
+        if failure_counter:
+            st.write("**Top failure causes:**")
+            st.dataframe(
+                pd.DataFrame(failure_counter.most_common(), columns=["reason", "count"]),
+                use_container_width=True
+            )
+        else:
+            st.success("No recorded failure reasons (all generations succeeded). ✅")
+
+        # Optional: Success by grade/topic/bloom (helpful if you switch configs during tests)
+        by_cfg = (
+            df.groupby(["grade", "topic", "bloom"])["success"]
+              .agg(total="count", successes="sum")
+              .reset_index()
+        )
+        by_cfg["success_rate_%"] = (by_cfg["successes"] / by_cfg["total"] * 100).round(1)
+
+        with st.expander("Show success rate by grade/topic/Bloom"):
+            st.dataframe(by_cfg.sort_values(["grade", "topic", "bloom"]), use_container_width=True)
+
+        with st.expander("Show raw generation log"):
+            st.dataframe(df, use_container_width=True)
+
+        st.download_button(
+            "⬇️ Download generation log (CSV)",
+            data=df.to_csv(index=False),
+            file_name="generation_log.csv",
+            mime="text/csv",
+        )
+
