@@ -1,5 +1,4 @@
-# question_generator.py
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple, Union
 import json
 import random
 
@@ -32,6 +31,11 @@ class QuestionGenerator:
     """
     Generates curriculum-aligned MCQs using LLM prompting with
     few-shot learning and structured output parsing.
+
+    UPDATED:
+    - Supports optional return_meta=True to return (question_dict, meta)
+    - Meta includes attempts_used + failure reasons per attempt
+    - Validation now returns (ok, reasons)
     """
 
     def __init__(self, api_key: str, model: str = "gpt-4o-mini", temperature: float = 0.8):
@@ -103,11 +107,15 @@ class QuestionGenerator:
         learning_outcome: Dict,
         target_difficulty: float = 3.0,
         max_attempts: int = 3,
-        avoid_stems: Optional[List[str]] = None
-    ) -> Optional[Dict]:
+        avoid_stems: Optional[List[str]] = None,
+        return_meta: bool = False
+    ) -> Union[Optional[Dict], Tuple[Optional[Dict], Dict]]:
 
         avoid_stems = avoid_stems or []
         base_prompt = self._build_prompt(learning_outcome, target_difficulty, avoid_stems)
+
+        # Collect failure info per generation attempt (for dissertation stats)
+        fail_reasons: List[Dict] = []
 
         prompt = base_prompt
         for attempt in range(1, max_attempts + 1):
@@ -117,17 +125,30 @@ class QuestionGenerator:
 
                 question = self.parser.parse(raw_output)
 
-                if self._validate_question(question, learning_outcome):
-                    return question.model_dump()
-                else:
-                    print(f"Generation attempt {attempt} failed validation.")
-                    prompt = self._adjust_prompt_for_retry(base_prompt, attempt)
+                ok, reasons = self._validate_question(question, learning_outcome)
+                if ok:
+                    meta = {"attempts_used": attempt, "fail_reasons": []}
+                    result = question.model_dump()
+                    return (result, meta) if return_meta else result
+
+                # Validation failed
+                fail_reasons.append({"attempt": attempt, "reasons": reasons})
+                print(f"Generation attempt {attempt} failed validation: {reasons}")
+                prompt = self._adjust_prompt_for_retry(base_prompt, attempt)
 
             except Exception as e:
+                # Parse/LLM error
+                fail_reasons.append({
+                    "attempt": attempt,
+                    "reasons": ["parse_or_llm_error"],
+                    "error": str(e)[:200]
+                })
                 print(f"Generation attempt {attempt} failed: {e}")
                 prompt = self._adjust_prompt_for_retry(base_prompt, attempt)
 
-        return None
+        # All attempts failed
+        meta = {"attempts_used": max_attempts, "fail_reasons": fail_reasons}
+        return (None, meta) if return_meta else None
 
     def _build_prompt(self, learning_outcome: Dict, target_difficulty: float, avoid_stems: List[str]) -> str:
         """Construct prompt with system role, context, constraints, and examples."""
@@ -195,12 +216,14 @@ OUTPUT FORMAT (JSON ONLY):
         idx = min(attempt - 1, len(adjustments) - 1)
         return original_prompt + adjustments[idx]
 
-    def _validate_question(self, question: QuestionSchema, learning_outcome: Dict) -> bool:
-        """Apply additional validation checks beyond schema validation."""
+    def _validate_question(self, question: QuestionSchema, learning_outcome: Dict) -> Tuple[bool, List[str]]:
+        """Apply additional validation checks beyond schema validation, returning reasons."""
+
+        reasons: List[str] = []
 
         # Bloom match
         if question.bloom_level != learning_outcome["bloom_level"]:
-            return False
+            reasons.append("bloom_mismatch")
 
         # Keyword presence (if keywords exist)
         outcome_keywords = set(learning_outcome.get("keywords", []))
@@ -211,17 +234,17 @@ OUTPUT FORMAT (JSON ONLY):
         ).lower()
 
         if outcome_keywords:
-            if not any(kw in question_text for kw in outcome_keywords):
-                return False
+            if not any(kw.lower() in question_text for kw in outcome_keywords):
+                reasons.append("keyword_missing")
 
         # Uniqueness of choices
         all_choices = [question.correct_answer] + question.distractors
         if len(set(all_choices)) != 4:
-            return False
+            reasons.append("choices_not_unique")
 
         # Readability check for primary level
         fk_grade = textstat.flesch_kincaid_grade(question.question_stem)
         if fk_grade > int(learning_outcome["grade_level"]) + 2:
-            return False
+            reasons.append("readability_high")
 
-        return True
+        return (len(reasons) == 0), reasons
