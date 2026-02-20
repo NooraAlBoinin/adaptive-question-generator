@@ -1,6 +1,6 @@
-# app.py - NEAT STRUCTURED STREAMLIT UI (Distinction-ready)
 import os
 import random
+import time  # NEW
 import streamlit as st
 
 from question_generator import QuestionGenerator
@@ -103,6 +103,10 @@ if "attempt_log" not in st.session_state:
 if "last_config" not in st.session_state:
     st.session_state.last_config = {"grade": grade, "topic": topic}
 
+# NEW: generation metrics for dissertation evidence (success/fail/retries/time/reasons)
+if "gen_metrics" not in st.session_state:
+    st.session_state.gen_metrics = []
+
 sequencer = st.session_state.sequencer
 
 # ----------------------------
@@ -115,7 +119,23 @@ def generate_new_question():
     # Avoid repeats (last 5 stems)
     avoid = st.session_state.question_history[-5:]
 
-    q = qg.generate_question(outcome, avoid_stems=avoid)
+    # --- NEW: capture generation reliability metrics ---
+    t0 = time.perf_counter()
+    q, meta = qg.generate_question(outcome, avoid_stems=avoid, return_meta=True)
+    latency = time.perf_counter() - t0
+
+    st.session_state.gen_metrics.append({
+        "ts": time.time(),
+        "grade": grade,
+        "topic": topic,
+        "bloom": outcome.get("bloom_level"),
+        "success": bool(q),
+        "attempts_used": meta.get("attempts_used"),
+        "latency_sec": round(latency, 3),
+        "fail_reasons": meta.get("fail_reasons", []),
+    })
+    # ---------------------------------------------------
+
     if not q:
         st.session_state.current_question = None
         st.session_state.current_options = None
@@ -152,6 +172,9 @@ def reset_quiz():
     st.session_state.answered_count = 0
     st.session_state.question_history = []
     st.session_state.attempt_log = []
+
+    # NEW: reset generation metrics too
+    st.session_state.gen_metrics = []
 
     st.session_state.sequencer = AdaptiveSequencer(initial_ability=0.0)
     st.session_state.sequencer.initialize_session("demo_student", outcomes * 10)
@@ -268,3 +291,8 @@ with st.container(border=True):
         m1, m2 = st.columns(2)
         m1.write(f"**Difficulty:** {q.get('estimated_difficulty', 0):.2f} / 5.0")
         m2.write(f"**Bloom Level:** {q.get('bloom_level', 'N/A')}")
+
+# NOTE:
+# - No UI flow changes were made.
+# - Generation reliability metrics are stored in st.session_state.gen_metrics for dissertation evidence.
+# - Optional: later you can export gen_metrics to CSV without changing the main UI.
