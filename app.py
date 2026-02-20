@@ -1,6 +1,9 @@
 import os
 import random
-import time  # NEW
+import time
+from collections import Counter
+
+import pandas as pd
 import streamlit as st
 
 from question_generator import QuestionGenerator
@@ -91,19 +94,19 @@ if "correct_count" not in st.session_state:
 if "answered_count" not in st.session_state:
     st.session_state.answered_count = 0
 
-# NEW: prevent repetition
+# prevent repetition
 if "question_history" not in st.session_state:
     st.session_state.question_history = []
 
-# NEW: show recent attempts
+# show recent attempts
 if "attempt_log" not in st.session_state:
     st.session_state.attempt_log = []
 
-# NEW: store last selected config to detect changes
+# store last selected config to detect changes
 if "last_config" not in st.session_state:
     st.session_state.last_config = {"grade": grade, "topic": topic}
 
-# NEW: generation metrics for dissertation evidence (success/fail/retries/time/reasons)
+# generation metrics for dissertation evidence (success/fail/retries/time/reasons)
 if "gen_metrics" not in st.session_state:
     st.session_state.gen_metrics = []
 
@@ -119,7 +122,7 @@ def generate_new_question():
     # Avoid repeats (last 5 stems)
     avoid = st.session_state.question_history[-5:]
 
-    # --- NEW: capture generation reliability metrics ---
+    # Capture generation reliability metrics
     t0 = time.perf_counter()
     q, meta = qg.generate_question(outcome, avoid_stems=avoid, return_meta=True)
     latency = time.perf_counter() - t0
@@ -134,7 +137,6 @@ def generate_new_question():
         "latency_sec": round(latency, 3),
         "fail_reasons": meta.get("fail_reasons", []),
     })
-    # ---------------------------------------------------
 
     if not q:
         st.session_state.current_question = None
@@ -173,7 +175,7 @@ def reset_quiz():
     st.session_state.question_history = []
     st.session_state.attempt_log = []
 
-    # NEW: reset generation metrics too
+    # reset generation metrics too
     st.session_state.gen_metrics = []
 
     st.session_state.sequencer = AdaptiveSequencer(initial_ability=0.0)
@@ -196,7 +198,6 @@ with st.container(border=True):
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Student Ability (θ)", f"{sequencer.current_ability:.2f}")
-
     c2.metric("Answered", str(st.session_state.answered_count))
     c3.metric("Correct", str(st.session_state.correct_count))
 
@@ -205,6 +206,72 @@ with st.container(border=True):
 
     if st.session_state.attempt_log:
         st.caption("Recent attempts: " + " ".join(st.session_state.attempt_log[-10:]))
+
+# ----------------------------
+# Option A: Generator Statistics Panel (Dissertation Evidence)
+# ----------------------------
+with st.container(border=True):
+    st.subheader("📈 Generator Statistics (Dissertation Evidence)")
+
+    gm = st.session_state.get("gen_metrics", [])
+    if not gm:
+        st.info("No generator metrics yet. Generate a few questions first.")
+    else:
+        df = pd.DataFrame(gm)
+
+        total = len(df)
+        success_n = int(df["success"].sum())
+        success_rate = (success_n / total) * 100 if total > 0 else 0.0
+
+        avg_attempts = df["attempts_used"].mean() if total > 0 else 0.0
+        avg_latency = df["latency_sec"].mean() if total > 0 else 0.0
+        p95_latency = df["latency_sec"].quantile(0.95) if total > 0 else 0.0
+
+        g1, g2, g3, g4 = st.columns(4)
+        g1.metric("Generations", f"{total}")
+        g2.metric("Success rate", f"{success_rate:.1f}%")
+        g3.metric("Avg attempts used", f"{avg_attempts:.2f}")
+        g4.metric("Avg latency", f"{avg_latency:.2f}s")
+
+        st.caption(f"95th percentile latency: {p95_latency:.2f}s")
+
+        # Failure reasons (only failed generations)
+        failure_counter = Counter()
+        for event in gm:
+            if not event.get("success", False):
+                for attempt_entry in event.get("fail_reasons", []):
+                    for reason in attempt_entry.get("reasons", []):
+                        failure_counter[reason] += 1
+
+        if failure_counter:
+            st.write("**Top failure causes:**")
+            st.dataframe(
+                pd.DataFrame(failure_counter.most_common(), columns=["reason", "count"]),
+                use_container_width=True
+            )
+        else:
+            st.success("No recorded failure reasons (all generations succeeded). ✅")
+
+        # Optional: Success by grade/topic/bloom (helpful if you switch configs during tests)
+        by_cfg = (
+            df.groupby(["grade", "topic", "bloom"])["success"]
+              .agg(total="count", successes="sum")
+              .reset_index()
+        )
+        by_cfg["success_rate_%"] = (by_cfg["successes"] / by_cfg["total"] * 100).round(1)
+
+        with st.expander("Show success rate by grade/topic/Bloom"):
+            st.dataframe(by_cfg.sort_values(["grade", "topic", "bloom"]), use_container_width=True)
+
+        with st.expander("Show raw generation log"):
+            st.dataframe(df, use_container_width=True)
+
+        st.download_button(
+            "⬇️ Download generation log (CSV)",
+            data=df.to_csv(index=False),
+            file_name="generation_log.csv",
+            mime="text/csv",
+        )
 
 # ----------------------------
 # Controls row (clean)
@@ -291,8 +358,3 @@ with st.container(border=True):
         m1, m2 = st.columns(2)
         m1.write(f"**Difficulty:** {q.get('estimated_difficulty', 0):.2f} / 5.0")
         m2.write(f"**Bloom Level:** {q.get('bloom_level', 'N/A')}")
-
-# NOTE:
-# - No UI flow changes were made.
-# - Generation reliability metrics are stored in st.session_state.gen_metrics for dissertation evidence.
-# - Optional: later you can export gen_metrics to CSV without changing the main UI.
