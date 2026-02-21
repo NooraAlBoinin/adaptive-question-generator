@@ -302,7 +302,7 @@ with st.container(border=True):
 # Generator Statistics Panel (Dissertation Evidence)
 # ----------------------------
 with st.container(border=True):
-    st.subheader("📈 Generator Statistics (Dissertation Evidence)")
+    st.subheader("📈 Generator Statistics")
 
     gm = st.session_state.get("gen_metrics", [])
     if not gm:
