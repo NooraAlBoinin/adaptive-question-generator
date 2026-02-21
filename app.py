@@ -23,7 +23,7 @@ st.divider()
 # Sidebar (Configuration)
 # ----------------------------
 st.sidebar.header("Configuration")
-api_key = st.secrets.get("OPENAI_API_KEY", "")
+api_key = st.sidebar.text_input("OpenAI API Key", type="password", value=os.getenv("OPENAI_API_KEY", ""))
 
 grade = st.sidebar.selectbox("Grade Level", [3, 4, 5, 6])
 topic = st.sidebar.selectbox(
@@ -59,8 +59,8 @@ outcomes = load_curriculum(grade, topic)
 # ----------------------------
 # Initialize components
 # ----------------------------
-if not api_key:
-    st.error("Missing OPENAI_API_KEY. Add it in Streamlit Secrets (Cloud) or .streamlit/secrets.toml (local).")
+if not (api_key and api_key.startswith("sk-")):
+    st.error("Please enter a valid OpenAI API key in the sidebar")
     st.stop()
 
 qg = QuestionGenerator(api_key=api_key)
@@ -363,4 +363,3 @@ with st.container(border=True):
             file_name="generation_log.csv",
             mime="text/csv",
         )
-
