@@ -23,7 +23,7 @@ st.divider()
 # Sidebar (Configuration)
 # ----------------------------
 st.sidebar.header("Configuration")
-api_key = st.sidebar.text_input("OpenAI API Key", type="password", value=os.getenv("OPENAI_API_KEY", ""))
+
 
 grade = st.sidebar.selectbox("Grade Level", [3, 4, 5, 6])
 topic = st.sidebar.selectbox(
