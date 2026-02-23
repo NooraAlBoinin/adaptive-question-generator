@@ -16,7 +16,7 @@ from adaptive_engine import AdaptiveSequencer
 # ----------------------------
 st.set_page_config(page_title="AI Adaptive Question Generator", layout="wide")
 st.title("AI-Powered Adaptive Question Generator")
-st.caption("Primary Cybersecurity & Digital Literacy • Qatar • Adaptive Difficulty • MCQ Practice")
+st.caption("Primary Cybersecurity & Digital Literacy • Qatar • Adaptive Difficulty • Multiple Choice Practice")
 st.divider()
 
 # ----------------------------
@@ -222,7 +222,7 @@ with st.container(border=True):
 # ----------------------------
 controls = st.columns([2, 1])
 with controls[0]:
-    if st.button("🎲 Generate / Next Question", type="primary"):
+    if st.button("Generate / Next Question", type="primary"):
         generate_new_question()
         st.rerun()
 
