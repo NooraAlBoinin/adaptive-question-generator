@@ -41,6 +41,16 @@ topic = st.sidebar.selectbox(
 st.sidebar.divider()
 st.sidebar.caption("Tip: changing grade/topic during a quiz may reset progress.")
 
+
+try:
+    api_key = st.secrets["OPENAI_API_KEY"]
+except KeyError:
+    st.error("Server configuration error: OPENAI_API_KEY not found in Streamlit Secrets.")
+    st.stop()
+
+qg = QuestionGenerator(api_key=api_key)
+estimator = DifficultyEstimator()
+
 # ----------------------------
 # Load curriculum (cache per grade/topic)
 # ----------------------------
